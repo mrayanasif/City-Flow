@@ -1,0 +1,89 @@
+#include <Arduino.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+// =====================================================
+// LCD
+// =====================================================
+
+#define SDA_PIN 8
+#define SCL_PIN 9
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// =====================================================
+// FSR
+// =====================================================
+
+#define FSR_PIN 5
+
+// =====================================================
+// SETUP
+// =====================================================
+
+void setup()
+{
+  Serial.begin(115200);
+
+  // LCD
+  Wire.begin(SDA_PIN, SCL_PIN);
+
+  lcd.init();
+  lcd.backlight();
+
+  // ADC
+  analogReadResolution(12);
+
+  lcd.clear();
+
+  lcd.setCursor(0, 0);
+  lcd.print("FSR SENSOR");
+
+  lcd.setCursor(0, 1);
+  lcd.print("Starting...");
+
+  delay(2000);
+
+  lcd.clear();
+}
+
+// =====================================================
+// LOOP
+// =====================================================
+
+void loop()
+{
+  // REAL-TIME FSR READING
+  int fsrValue = analogRead(FSR_PIN);
+
+  // ===================================================
+  // SERIAL MONITOR
+  // ===================================================
+
+  Serial.print("FSR VALUE: ");
+  Serial.println(fsrValue);
+
+  // ===================================================
+  // LCD
+  // ===================================================
+
+  lcd.clear();
+
+  lcd.setCursor(0, 0);
+  lcd.print("FSR:");
+
+  lcd.print(fsrValue);
+
+  lcd.setCursor(0, 1);
+
+  if (fsrValue < 100)
+  {
+    lcd.print("NO PRESSURE");
+  }
+  else
+  {
+    lcd.print("PRESSURE DETECT");
+  }
+
+  delay(200);
+}

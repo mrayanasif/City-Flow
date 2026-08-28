@@ -1,0 +1,121 @@
+#include <Arduino.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+// =====================================================
+// LCD
+// =====================================================
+
+#define SDA_PIN 8
+#define SCL_PIN 9
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// =====================================================
+// LDR
+// =====================================================
+
+#define LDR_PIN 16
+
+// Your actual LDR readings are around 570-620.
+// Adjust this after checking bright/dark values.
+#define DARK_THRESHOLD 590
+
+// =====================================================
+// RELAY
+// =====================================================
+
+#define RELAY_PIN 7
+
+// Your relay:
+// HIGH = ON
+// LOW  = OFF
+
+// =====================================================
+// SETUP
+// =====================================================
+
+void setup()
+{
+  Serial.begin(115200);
+
+  // LCD
+  Wire.begin(SDA_PIN, SCL_PIN);
+
+  lcd.init();
+  lcd.backlight();
+
+  // LDR
+  analogReadResolution(12);
+
+  // Relay
+  pinMode(RELAY_PIN, OUTPUT);
+
+  // Start OFF
+  digitalWrite(RELAY_PIN, LOW);
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("CITYFLOW");
+
+  lcd.setCursor(0, 1);
+  lcd.print("LDR STREET LIGHT");
+
+  delay(2000);
+}
+
+// =====================================================
+// LOOP
+// =====================================================
+
+void loop()
+{
+  // REAL-TIME LDR READING
+  int ldrValue = analogRead(LDR_PIN);
+
+  Serial.print("LDR VALUE: ");
+  Serial.print(ldrValue);
+
+  // ===================================================
+  // DARK = LIGHT ON
+  // BRIGHT = LIGHT OFF
+  // ===================================================
+
+  if (ldrValue < DARK_THRESHOLD)
+  {
+    // DARK
+    digitalWrite(RELAY_PIN, HIGH);
+
+    Serial.println(" | DARK | RELAY ON | LIGHT ON");
+
+    lcd.clear();
+
+    lcd.setCursor(0, 0);
+    lcd.print("DARK");
+
+    lcd.setCursor(0, 1);
+    lcd.print("L:");
+    lcd.print(ldrValue);
+    lcd.print(" ON");
+  }
+  else
+  {
+    // BRIGHT
+    digitalWrite(RELAY_PIN, LOW);
+
+    Serial.println(" | BRIGHT | RELAY OFF | LIGHT OFF");
+
+    lcd.clear();
+
+    lcd.setCursor(0, 0);
+    lcd.print("BRIGHT");
+
+    lcd.setCursor(0, 1);
+    lcd.print("L:");
+    lcd.print(ldrValue);
+    lcd.print(" OFF");
+  }
+
+  // Fast real-time refresh
+  delay(200);
+}

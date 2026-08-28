@@ -1,0 +1,121 @@
+#include <Arduino.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+// =====================================================
+// LCD
+// =====================================================
+
+#define SDA_PIN 8
+#define SCL_PIN 9
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// =====================================================
+// MQ-2
+// =====================================================
+
+#define MQ2_PIN 4
+
+// Starting threshold only.
+// This must be adjusted according to your real readings.
+#define GAS_THRESHOLD 1800
+
+// =====================================================
+// BUZZER
+// =====================================================
+
+#define BUZZER_PIN 6
+
+// =====================================================
+// SETUP
+// =====================================================
+
+void setup()
+{
+  Serial.begin(115200);
+
+  // LCD
+  Wire.begin(SDA_PIN, SCL_PIN);
+
+  lcd.init();
+  lcd.backlight();
+
+  // ADC
+  analogReadResolution(12);
+
+  // Buzzer
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
+
+  // Startup
+  lcd.clear();
+
+  lcd.setCursor(0, 0);
+  lcd.print("MQ-2 GAS SENSOR");
+
+  lcd.setCursor(0, 1);
+  lcd.print("Warming Up...");
+
+  delay(5000);
+
+  lcd.clear();
+}
+
+// =====================================================
+// LOOP
+// =====================================================
+
+void loop()
+{
+  // ===================================================
+  // REAL-TIME MQ-2 READING
+  // ===================================================
+
+  int gasValue = analogRead(MQ2_PIN);
+
+  Serial.print("MQ-2 VALUE: ");
+  Serial.print(gasValue);
+
+  // ===================================================
+  // GAS DETECTION
+  // ===================================================
+
+  if (gasValue > GAS_THRESHOLD)
+  {
+    // GAS DETECTED
+
+    digitalWrite(BUZZER_PIN, HIGH);
+
+    Serial.println(" | GAS DETECTED | BUZZER ON");
+
+    lcd.clear();
+
+    lcd.setCursor(0, 0);
+    lcd.print("GAS DETECTED!");
+
+    lcd.setCursor(0, 1);
+    lcd.print("MQ:");
+    lcd.print(gasValue);
+  }
+  else
+  {
+    // SAFE
+
+    digitalWrite(BUZZER_PIN, LOW);
+
+    Serial.println(" | AIR SAFE | BUZZER OFF");
+
+    lcd.clear();
+
+    lcd.setCursor(0, 0);
+    lcd.print("AIR SAFE");
+
+    lcd.setCursor(0, 1);
+    lcd.print("MQ:");
+    lcd.print(gasValue);
+  }
+
+  // Real-time refresh
+  delay(300);
+}

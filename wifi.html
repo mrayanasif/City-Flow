@@ -1,0 +1,121 @@
+#include <Arduino.h>
+#include <Wire.h>
+#include <WiFi.h>
+#include <ThingSpeak.h>
+#include <LiquidCrystal_I2C.h>
+
+#define SDA_PIN 8
+#define SCL_PIN 9
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// =====================================================
+// WIFI
+// =====================================================
+
+const char* WIFI_SSID = "RAYAN";
+const char* WIFI_PASSWORD = "rayanasif";
+
+// =====================================================
+// THINGSPEAK
+// =====================================================
+
+unsigned long CHANNEL_ID = 3456566;
+
+const char* WRITE_API_KEY = "8C86B60BD9AU524Z";
+
+WiFiClient client;
+
+void setup()
+{
+  Serial.begin(115200);
+
+  Wire.begin(SDA_PIN, SCL_PIN);
+
+  lcd.init();
+  lcd.backlight();
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("WiFi Connecting");
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println();
+  Serial.println("WiFi Connected");
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("WiFi CONNECTED");
+
+  delay(1500);
+
+  ThingSpeak.begin(client);
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("ThingSpeak");
+  lcd.setCursor(0, 1);
+  lcd.print("READY");
+
+  delay(2000);
+}
+
+void loop()
+{
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    // Test value
+    int testValue = millis() / 1000;
+
+    ThingSpeak.setField(1, testValue);
+
+    int response = ThingSpeak.writeFields(
+      CHANNEL_ID,
+      WRITE_API_KEY
+    );
+
+    Serial.print("ThingSpeak Response: ");
+    Serial.println(response);
+
+    lcd.clear();
+
+    if (response == 200)
+    {
+      lcd.setCursor(0, 0);
+      lcd.print("ThingSpeak OK");
+
+      lcd.setCursor(0, 1);
+      lcd.print("Value:");
+      lcd.print(testValue);
+    }
+    else
+    {
+      lcd.setCursor(0, 0);
+      lcd.print("TS ERROR:");
+
+      lcd.print(response);
+
+      lcd.setCursor(0, 1);
+      lcd.print("Check API Key");
+    }
+  }
+  else
+  {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("WiFi LOST");
+
+    Serial.println("WiFi LOST");
+  }
+
+  // ThingSpeak minimum update interval
+  delay(20000);
+}

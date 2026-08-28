@@ -1,0 +1,89 @@
+#include <Arduino.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+// =====================================================
+// LCD
+// =====================================================
+
+#define SDA_PIN 8
+#define SCL_PIN 9
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// =====================================================
+// PIR
+// =====================================================
+
+#define PIR_PIN 12
+
+// =====================================================
+// SETUP
+// =====================================================
+
+void setup()
+{
+  Serial.begin(115200);
+
+  // LCD
+  Wire.begin(SDA_PIN, SCL_PIN);
+
+  lcd.init();
+  lcd.backlight();
+
+  // PIR
+  pinMode(PIR_PIN, INPUT);
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("PIR SENSOR");
+
+  lcd.setCursor(0, 1);
+  lcd.print("Starting...");
+
+  delay(3000);
+
+  lcd.clear();
+}
+
+// =====================================================
+// LOOP
+// =====================================================
+
+void loop()
+{
+  // REAL-TIME PIR READING
+  int pirValue = digitalRead(PIR_PIN);
+
+  // ===================================================
+  // MOTION DETECTION
+  // ===================================================
+
+  if (pirValue == HIGH)
+  {
+    Serial.println("PIR: MOTION DETECTED");
+
+    lcd.clear();
+
+    lcd.setCursor(0, 0);
+    lcd.print("PIR SENSOR");
+
+    lcd.setCursor(0, 1);
+    lcd.print("MOTION DETECTED");
+  }
+  else
+  {
+    Serial.println("PIR: NO MOTION");
+
+    lcd.clear();
+
+    lcd.setCursor(0, 0);
+    lcd.print("PIR SENSOR");
+
+    lcd.setCursor(0, 1);
+    lcd.print("NO MOTION");
+  }
+
+  // Fast real-time refresh
+  delay(200);
+}
