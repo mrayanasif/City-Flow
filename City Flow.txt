@@ -1,0 +1,944 @@
+#include <Arduino.h>
+#include <WiFi.h>
+#include <Wire.h>
+#include <DHT.h>
+#include <ThingSpeak.h>
+
+// =====================================================
+// CITYFLOW - ESP32-S3 REAL HARDWARE
+// DHT11 + MQ2 + BUZZER + LDR + RELAY + PIR + ULTRASONIC
+// LCD + THINGSPEAK
+// =====================================================
+
+
+// =====================================================
+// WIFI
+// =====================================================
+
+const char* WIFI_SSID = "YOUR_WIFI_NAME";
+const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+
+
+// =====================================================
+// THINGSPEAK
+// =====================================================
+
+unsigned long CHANNEL_ID = 3457627;
+const char* WRITE_API_KEY = "YOUR_THINGSPEAK_WRITE_KEY";
+
+WiFiClient client;
+
+
+// =====================================================
+// PIN DEFINITIONS
+// =====================================================
+
+#define DHT_PIN 15
+#define DHT_TYPE DHT11
+
+#define MQ2_PIN 2
+
+#define BUZZER_PIN 6
+
+#define RELAY_PIN 7
+
+#define LCD_SDA 8
+#define LCD_SCL 9
+
+#define LDR_PIN 16
+
+#define TRIG_PIN 17
+#define ECHO_PIN 18
+
+#define PIR_PIN 5
+
+
+// =====================================================
+// DHT11
+// =====================================================
+
+DHT dht(DHT_PIN, DHT_TYPE);
+
+
+// =====================================================
+// LCD
+// =====================================================
+
+#define LCD_ADDR 0x27
+
+#define LCD_RS 0x01
+#define LCD_EN 0x04
+#define LCD_BL 0x08
+
+
+void expanderWrite(uint8_t data)
+{
+  Wire.beginTransmission(LCD_ADDR);
+  Wire.write(data | LCD_BL);
+  Wire.endTransmission();
+}
+
+
+void pulseEnable(uint8_t data)
+{
+  expanderWrite(data | LCD_EN);
+
+  delayMicroseconds(1);
+
+  expanderWrite(data & ~LCD_EN);
+
+  delayMicroseconds(50);
+}
+
+
+void write4bits(uint8_t value)
+{
+  expanderWrite(value);
+  pulseEnable(value);
+}
+
+
+void lcdCommand(uint8_t command)
+{
+  write4bits(command & 0xF0);
+  write4bits((command << 4) & 0xF0);
+}
+
+
+void lcdData(uint8_t data)
+{
+  write4bits((data & 0xF0) | LCD_RS);
+  write4bits(((data << 4) & 0xF0) | LCD_RS);
+}
+
+
+void lcdClear()
+{
+  lcdCommand(0x01);
+  delay(2);
+}
+
+
+void lcdSetCursor(uint8_t col, uint8_t row)
+{
+  uint8_t address;
+
+  if (row == 0)
+    address = col;
+  else
+    address = 0x40 + col;
+
+  lcdCommand(0x80 | address);
+}
+
+
+void lcdPrint(const char* text)
+{
+  while (*text)
+  {
+    lcdData(*text);
+    text++;
+  }
+}
+
+
+void lcdInit()
+{
+  delay(50);
+
+  write4bits(0x30);
+  delay(5);
+
+  write4bits(0x30);
+  delayMicroseconds(150);
+
+  write4bits(0x30);
+  delayMicroseconds(150);
+
+  write4bits(0x20);
+  delayMicroseconds(150);
+
+  lcdCommand(0x28);
+  lcdCommand(0x0C);
+  lcdCommand(0x06);
+
+  lcdClear();
+}
+
+
+// =====================================================
+// EVENT SETTINGS
+// These are trigger limits, NOT fake sensor readings.
+// All sensor values come directly from the physical
+// sensors in real time.
+// =====================================================
+
+const float TEMP_THRESHOLD = 35.0;
+const float HUMIDITY_THRESHOLD = 70.0;
+
+// Calibrate this from the real LDR reading.
+const int DARK_THRESHOLD = 500;
+
+// Higher distance than this = occupied.
+// Adjust this after testing the real parking setup.
+const int PARKING_DISTANCE = 10;
+
+
+// =====================================================
+// SENSOR VARIABLES
+// =====================================================
+
+float temperature = 0;
+float humidity = 0;
+
+int gasValue = 0;
+int lightValue = 0;
+int pirValue = 0;
+
+long distance = -1;
+
+
+// =====================================================
+// TIMING
+// =====================================================
+
+unsigned long lastSensorRead = 0;
+
+unsigned long lastThingSpeak = 0;
+
+unsigned long lastScreenChange = 0;
+
+unsigned long priorityStart = 0;
+
+
+// Sensor reading interval
+const unsigned long SENSOR_INTERVAL = 2000;
+
+// Normal LCD page duration
+const unsigned long PAGE_INTERVAL = 2500;
+
+// Special condition display duration
+const unsigned long PRIORITY_DURATION = 3000;
+
+
+// =====================================================
+// LCD PAGE
+// =====================================================
+
+int currentPage = 0;
+
+// 0 = Welcome
+// 1 = Temperature
+// 2 = Humidity
+// 3 = Parking
+// 4 = Traffic
+// 5 = Gas
+// 6 = Street Light
+
+
+// =====================================================
+// PRIORITY EVENT
+// =====================================================
+
+#define EVENT_NONE        0
+#define EVENT_GAS         1
+#define EVENT_TEMPERATURE 2
+#define EVENT_HUMIDITY    3
+#define EVENT_PARKING     4
+#define EVENT_MOTION      5
+#define EVENT_DARK        6
+
+int activeEvent = EVENT_NONE;
+int lastDetectedEvent = EVENT_NONE;
+
+
+// =====================================================
+// ULTRASONIC
+// =====================================================
+
+long readDistance()
+{
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+
+  digitalWrite(TRIG_PIN, LOW);
+
+  long duration = pulseIn(ECHO_PIN, HIGH, 30000);
+
+  if (duration == 0)
+  {
+    return -1;
+  }
+
+  return duration * 0.0343 / 2;
+}
+
+
+// =====================================================
+// READ SENSORS
+// =====================================================
+
+void readSensors()
+{
+  temperature = dht.readTemperature();
+
+  humidity = dht.readHumidity();
+
+  gasValue = digitalRead(MQ2_PIN);
+
+  lightValue = analogRead(LDR_PIN);
+
+  pirValue = digitalRead(PIR_PIN);
+
+  distance = readDistance();
+
+
+  Serial.println();
+  Serial.println("============================");
+
+  if (!isnan(temperature))
+  {
+    Serial.print("Temperature: ");
+    Serial.print(temperature);
+    Serial.println(" C");
+  }
+  else
+  {
+    Serial.println("Temperature: READ FAILED");
+  }
+
+
+  if (!isnan(humidity))
+  {
+    Serial.print("Humidity: ");
+    Serial.print(humidity);
+    Serial.println(" %");
+  }
+  else
+  {
+    Serial.println("Humidity: READ FAILED");
+  }
+
+
+  Serial.print("Gas: ");
+  Serial.println(gasValue);
+
+
+  Serial.print("LDR: ");
+  Serial.println(lightValue);
+
+
+  Serial.print("Distance: ");
+  Serial.print(distance);
+  Serial.println(" cm");
+
+
+  Serial.print("Motion: ");
+
+  if (pirValue == HIGH)
+    Serial.println("YES");
+  else
+    Serial.println("NO");
+
+
+  Serial.println("============================");
+}
+
+
+// =====================================================
+// STREET LIGHT
+// =====================================================
+
+void controlStreetLight()
+{
+  bool dark = lightValue < DARK_THRESHOLD;
+
+  if (dark)
+  {
+    digitalWrite(RELAY_PIN, HIGH);
+
+    Serial.println("Street Light: ON");
+  }
+  else
+  {
+    digitalWrite(RELAY_PIN, LOW);
+
+    Serial.println("Street Light: OFF");
+  }
+}
+
+
+// =====================================================
+// BUZZER
+// MQ2 ONLY
+// =====================================================
+
+void controlBuzzer()
+{
+  if (gasValue == HIGH)
+  {
+    tone(BUZZER_PIN, 1000);
+  }
+  else
+  {
+    noTone(BUZZER_PIN);
+  }
+}
+
+
+// =====================================================
+// DETECT IMPORTANT EVENT
+// =====================================================
+
+int detectPriorityEvent()
+{
+  // Gas has highest priority
+  if (gasValue == HIGH)
+  {
+    return EVENT_GAS;
+  }
+
+
+  // High temperature
+  if (!isnan(temperature) &&
+      temperature > TEMP_THRESHOLD)
+  {
+    return EVENT_TEMPERATURE;
+  }
+
+
+  // High humidity
+  if (!isnan(humidity) &&
+      humidity > HUMIDITY_THRESHOLD)
+  {
+    return EVENT_HUMIDITY;
+  }
+
+
+  // HIGH distance = occupied
+  if (distance > PARKING_DISTANCE)
+  {
+    return EVENT_PARKING;
+  }
+
+
+  // Motion
+  if (pirValue == HIGH)
+  {
+    return EVENT_MOTION;
+  }
+
+
+  // Darkness
+  if (lightValue < DARK_THRESHOLD)
+  {
+    return EVENT_DARK;
+  }
+
+
+  return EVENT_NONE;
+}
+
+
+// =====================================================
+// SHOW PRIORITY EVENT
+// =====================================================
+
+void showPriorityEvent(int event)
+{
+  lcdClear();
+
+
+  switch (event)
+  {
+    case EVENT_GAS:
+
+      lcdSetCursor(0, 0);
+      lcdPrint("GAS ALERT!");
+
+      lcdSetCursor(0, 1);
+      lcdPrint("Gas Detected");
+
+      break;
+
+
+    case EVENT_TEMPERATURE:
+
+      lcdSetCursor(0, 0);
+      lcdPrint("TEMP HIGH");
+
+      lcdSetCursor(0, 1);
+      lcdPrint("T:");
+
+      lcdPrint(String(temperature, 1).c_str());
+
+      lcdPrint(" C");
+
+      break;
+
+
+    case EVENT_HUMIDITY:
+
+      lcdSetCursor(0, 0);
+      lcdPrint("HUMIDITY HIGH");
+
+      lcdSetCursor(0, 1);
+      lcdPrint("H:");
+
+      lcdPrint(String(humidity, 1).c_str());
+
+      lcdPrint(" %");
+
+      break;
+
+
+    case EVENT_PARKING:
+
+      lcdSetCursor(0, 0);
+      lcdPrint("PARKING");
+
+      lcdSetCursor(0, 1);
+      lcdPrint("OCCUPIED");
+
+      break;
+
+
+    case EVENT_MOTION:
+
+      lcdSetCursor(0, 0);
+      lcdPrint("TRAFFIC");
+
+      lcdSetCursor(0, 1);
+      lcdPrint("MOTION DETECTED");
+
+      break;
+
+
+    case EVENT_DARK:
+
+      lcdSetCursor(0, 0);
+      lcdPrint("STREET LIGHT");
+
+      lcdSetCursor(0, 1);
+      lcdPrint("LIGHTS ON");
+
+      break;
+
+
+    default:
+      break;
+  }
+}
+
+
+// =====================================================
+// NORMAL LOOP SCREENS
+// =====================================================
+
+void showNormalPage()
+{
+  lcdClear();
+
+
+  switch (currentPage)
+  {
+    // -------------------------------------------------
+    // PAGE 0
+    // -------------------------------------------------
+
+    case 0:
+
+      lcdSetCursor(0, 0);
+      lcdPrint("WELCOME TO");
+
+      lcdSetCursor(0, 1);
+      lcdPrint("CITYFLOW");
+
+      break;
+
+
+    // -------------------------------------------------
+    // PAGE 1
+    // -------------------------------------------------
+
+    case 1:
+
+      lcdSetCursor(0, 0);
+      lcdPrint("TEMPERATURE");
+
+      lcdSetCursor(0, 1);
+
+      if (!isnan(temperature))
+      {
+        lcdPrint("T:");
+        lcdPrint(String(temperature, 1).c_str());
+        lcdPrint(" C");
+      }
+      else
+      {
+        lcdPrint("READ FAILED");
+      }
+
+      break;
+
+
+    // -------------------------------------------------
+    // PAGE 2
+    // -------------------------------------------------
+
+    case 2:
+
+      lcdSetCursor(0, 0);
+      lcdPrint("HUMIDITY");
+
+      lcdSetCursor(0, 1);
+
+      if (!isnan(humidity))
+      {
+        lcdPrint("H:");
+        lcdPrint(String(humidity, 1).c_str());
+        lcdPrint(" %");
+      }
+      else
+      {
+        lcdPrint("READ FAILED");
+      }
+
+      break;
+
+
+    // -------------------------------------------------
+    // PAGE 3
+    // -------------------------------------------------
+
+    case 3:
+
+      lcdSetCursor(0, 0);
+      lcdPrint("PARKING");
+
+      lcdSetCursor(0, 1);
+
+      if (distance > PARKING_DISTANCE)
+      {
+        lcdPrint("OCCUPIED");
+      }
+      else
+      {
+        lcdPrint("FREE");
+      }
+
+      break;
+
+
+    // -------------------------------------------------
+    // PAGE 4
+    // -------------------------------------------------
+
+    case 4:
+
+      lcdSetCursor(0, 0);
+      lcdPrint("TRAFFIC");
+
+      lcdSetCursor(0, 1);
+
+      if (pirValue == HIGH)
+      {
+        lcdPrint("MOTION");
+      }
+      else
+      {
+        lcdPrint("QUIET");
+      }
+
+      break;
+
+
+    // -------------------------------------------------
+    // PAGE 5
+    // -------------------------------------------------
+
+    case 5:
+
+      lcdSetCursor(0, 0);
+      lcdPrint("GAS");
+
+      lcdSetCursor(0, 1);
+
+      if (gasValue == HIGH)
+      {
+        lcdPrint("ALERT");
+      }
+      else
+      {
+        lcdPrint("NORMAL");
+      }
+
+      break;
+
+
+    // -------------------------------------------------
+    // PAGE 6
+    // -------------------------------------------------
+
+    case 6:
+
+      lcdSetCursor(0, 0);
+      lcdPrint("STREET LIGHT");
+
+      lcdSetCursor(0, 1);
+
+      if (lightValue < DARK_THRESHOLD)
+      {
+        lcdPrint("ON");
+      }
+      else
+      {
+        lcdPrint("OFF");
+      }
+
+      break;
+  }
+}
+
+
+// =====================================================
+// THINGSPEAK
+// =====================================================
+
+void uploadToThingSpeak()
+{
+  if (WiFi.status() != WL_CONNECTED)
+  {
+    Serial.println("WiFi not connected");
+    return;
+  }
+
+
+  ThingSpeak.setField(1, temperature);
+
+  ThingSpeak.setField(2, humidity);
+
+  ThingSpeak.setField(3, distance);
+
+  ThingSpeak.setField(4, gasValue);
+
+  ThingSpeak.setField(5, lightValue);
+
+  ThingSpeak.setField(6, pirValue);
+
+
+  int result = ThingSpeak.writeFields(
+    CHANNEL_ID,
+    WRITE_API_KEY
+  );
+
+
+  if (result == 200)
+  {
+    Serial.println("ThingSpeak upload successful");
+  }
+  else
+  {
+    Serial.print("ThingSpeak error: ");
+    Serial.println(result);
+  }
+}
+
+
+// =====================================================
+// SETUP
+// =====================================================
+
+void setup()
+{
+  Serial.begin(115200);
+
+  delay(1000);
+
+
+  // DHT11
+  dht.begin();
+
+  // Real ESP32-S3 ADC readings
+  analogReadResolution(12);
+
+
+  // GPIO
+  pinMode(MQ2_PIN, INPUT);
+
+  pinMode(BUZZER_PIN, OUTPUT);
+
+  pinMode(RELAY_PIN, OUTPUT);
+
+  pinMode(PIR_PIN, INPUT);
+
+  pinMode(TRIG_PIN, OUTPUT);
+
+  pinMode(ECHO_PIN, INPUT);
+
+
+  // Initial state
+  digitalWrite(RELAY_PIN, LOW);
+
+  noTone(BUZZER_PIN);
+
+
+  // LCD
+  Wire.begin(LCD_SDA, LCD_SCL);
+
+  lcdInit();
+
+  showNormalPage();
+
+
+  // WiFi
+  Serial.println();
+  Serial.println("Connecting WiFi...");
+
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  unsigned long startTime = millis();
+
+
+  while (
+    WiFi.status() != WL_CONNECTED &&
+    millis() - startTime < 15000
+  )
+  {
+    delay(500);
+
+    Serial.print(".");
+  }
+
+
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    Serial.println();
+
+    Serial.println("WiFi Connected");
+
+    Serial.print("IP: ");
+    Serial.println(WiFi.localIP());
+
+    ThingSpeak.begin(client);
+  }
+  else
+  {
+    Serial.println();
+
+    Serial.println("WiFi failed");
+
+    Serial.println("Continuing offline...");
+  }
+
+
+  Serial.println();
+  Serial.println("CITYFLOW REAL HARDWARE STARTED");
+  Serial.println("Reading physical sensors in real time...");
+}
+
+
+// =====================================================
+// LOOP
+// =====================================================
+
+void loop()
+{
+  unsigned long now = millis();
+
+
+  // ===================================================
+  // READ SENSORS
+  // ===================================================
+
+  if (now - lastSensorRead >= SENSOR_INTERVAL)
+  {
+    lastSensorRead = now;
+
+    readSensors();
+
+    controlStreetLight();
+
+    controlBuzzer();
+
+
+    // -----------------------------------------------
+    // CHECK FOR NEW IMPORTANT EVENT
+    // -----------------------------------------------
+
+    int newEvent = detectPriorityEvent();
+
+    // Interrupt the normal LCD loop only when a condition
+    // becomes active or changes to another condition.
+    if (newEvent != EVENT_NONE && newEvent != lastDetectedEvent)
+    {
+      activeEvent = newEvent;
+      lastDetectedEvent = newEvent;
+      priorityStart = now;
+      showPriorityEvent(activeEvent);
+    }
+
+    // Reset the trigger when the condition is gone.
+    if (newEvent == EVENT_NONE)
+    {
+      lastDetectedEvent = EVENT_NONE;
+    }
+  }
+
+
+  // ===================================================
+  // IMPORTANT EVENT SCREEN
+  // ===================================================
+
+  if (activeEvent != EVENT_NONE)
+  {
+    // Keep important condition on screen
+    // for 3 seconds, then return to normal loop.
+
+    if (now - priorityStart >= PRIORITY_DURATION)
+    {
+      activeEvent = EVENT_NONE;
+
+      lastScreenChange = now;
+
+      showNormalPage();
+    }
+  }
+
+
+  // ===================================================
+  // NORMAL SCREEN LOOP
+  // ===================================================
+
+  else
+  {
+    if (now - lastScreenChange >= PAGE_INTERVAL)
+    {
+      lastScreenChange = now;
+
+      currentPage++;
+
+      if (currentPage > 6)
+      {
+        currentPage = 0;
+      }
+
+      showNormalPage();
+    }
+  }
+
+
+  // ===================================================
+  // THINGSPEAK
+  // ===================================================
+
+  if (now - lastThingSpeak >= 20000)
+  {
+    lastThingSpeak = now;
+
+    uploadToThingSpeak();
+  }
+}
