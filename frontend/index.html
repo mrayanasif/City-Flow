@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🌸 City-Flow • Smart City</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Three.js for 3D Background -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Chart.js for graphs -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+    <!-- 🌸 3D Canvas Background -->
+    <div id="canvas-container"></div>
+
+    <!-- 🌸 Main Dashboard -->
+    <div class="dashboard">
+
+        <!-- Header -->
+        <header>
+            <div class="logo">
+                <span class="icon">🌸</span>
+                <h1>City·Flow</h1>
+            </div>
+            <div class="status-badge" id="connectionStatus">
+                <span class="dot"></span> Online
+            </div>
+        </header>
+
+        <!-- Sensor Cards Grid -->
+        <section class="sensor-grid">
+            <div class="sensor-card">
+                <div class="icon">💡</div>
+                <h3>Light (LDR)</h3>
+                <p class="value" id="ldrValue">--</p>
+                <div class="progress-bar"><div class="fill" id="ldrBar" style="width:0%"></div></div>
+            </div>
+
+            <div class="sensor-card">
+                <div class="icon">🌡️</div>
+                <h3>Temperature</h3>
+                <p class="value" id="tempValue">-- <span class="unit">°C</span></p>
+            </div>
+
+            <div class="sensor-card">
+                <div class="icon">💧</div>
+                <h3>Humidity</h3>
+                <p class="value" id="humValue">-- <span class="unit">%</span></p>
+            </div>
+
+            <div class="sensor-card">
+                <div class="icon">📏</div>
+                <h3>Distance</h3>
+                <p class="value" id="distValue">-- <span class="unit">cm</span></p>
+            </div>
+
+            <div class="sensor-card alert-card" id="gasCard">
+                <div class="icon">🔥</div>
+                <h3>Gas Leak</h3>
+                <p class="value" id="gasValue">✅ Safe</p>
+            </div>
+
+            <div class="sensor-card alert-card" id="motionCard">
+                <div class="icon">🚨</div>
+                <h3>Motion</h3>
+                <p class="value" id="motionValue">✅ None</p>
+            </div>
+
+            <div class="sensor-card" id="relayCard">
+                <div class="icon">🔌</div>
+                <h3>Relay</h3>
+                <p class="value" id="relayValue">⚪ OFF</p>
+            </div>
+        </section>
+
+        <!-- Charts + Alerts -->
+        <div class="row">
+            <section class="chart-section">
+                <h2>📈 Sensor Trends</h2>
+                <div class="chart-controls">
+                    <button onclick="fetchHistory(6)" class="active">6H</button>
+                    <button onclick="fetchHistory(12)">12H</button>
+                    <button onclick="fetchHistory(24)">24H</button>
+                </div>
+                <canvas id="sensorChart"></canvas>
+            </section>
+
+            <section class="alerts-section">
+                <h2>🚨 Alerts</h2>
+                <ul id="alertsList">
+                    <li class="empty">✨ No alerts yet</li>
+                </ul>
+            </section>
+        </div>
+
+        <!-- Footer -->
+        <footer>
+            <p>Made with <span class="heart">❤️</span> by <strong>Uzan Khan</strong> &amp; Team</p>
+        </footer>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
